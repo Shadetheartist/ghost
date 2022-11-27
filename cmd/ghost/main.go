@@ -47,23 +47,42 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		engineStatus := ghost.GetEngine().Status()
 		startStr := fmt.Sprintf("UTC Startup Time: %s\n", engineStatus.StartupTime.UTC().Format(ghost.TimeFormat))
-		uptimeStr := fmt.Sprintf("Uptime Minutes: %d\n", engineStatus.UptimeMinutes)
+		uptimeStr := fmt.Sprintf("Uptime Minutes: %d\n\n", engineStatus.UptimeMinutes)
+
 		reqRegStr := fmt.Sprintf("Requests Registered: %d\n", engineStatus.RequestsRegisteredCount)
 		reqServStr := fmt.Sprintf("Requests Served: %d\n", engineStatus.RequestsServedCount)
 		reqErrStr := fmt.Sprintf("Request Errors: %d\n", engineStatus.RequestsErrorCount)
-		queueStr := fmt.Sprintf("Queue: %d/%d\n",
+		queueStr := fmt.Sprintf("Request Queue: %d/%d\n",
 			engineStatus.QueueLength,
 			engineStatus.QueueCapacity)
-		activeStr := fmt.Sprintf("Active: %d/%d\n",
+
+		activeStr := fmt.Sprintf("Active Requests: %d/%d\n\n",
 			engineStatus.ActiveRequestsCount,
 			engineStatus.ActiveRequestsCapacity)
+
+		notifServStr := fmt.Sprintf("Notifications Served: %d\n", engineStatus.RequestsServedCount)
+		notifErrStr := fmt.Sprintf("Notification Errors: %d\n", engineStatus.RequestsErrorCount)
+		notifQueueStr := fmt.Sprintf("Notification Queue: %d/%d\n",
+			engineStatus.NotificationQueue,
+			engineStatus.NotificationQueueCapacity)
+		activeNotifQueueStr := fmt.Sprintf("Active Notifications: %d/%d\n",
+			engineStatus.ActiveNotificationsCount,
+			engineStatus.ActiveNotificationsCapacity)
+
 		fmt.Fprintf(w, startStr)
 		fmt.Fprintf(w, uptimeStr)
+
 		fmt.Fprintf(w, reqRegStr)
 		fmt.Fprintf(w, reqServStr)
 		fmt.Fprintf(w, reqErrStr)
 		fmt.Fprintf(w, queueStr)
 		fmt.Fprintf(w, activeStr)
+
+		fmt.Fprintf(w, notifServStr)
+		fmt.Fprintf(w, notifErrStr)
+		fmt.Fprintf(w, notifQueueStr)
+		fmt.Fprintf(w, activeNotifQueueStr)
+
 	} else {
 		uuid := uuid.MustParse(id)
 
@@ -87,6 +106,7 @@ func main() {
 
 	capacity := flag.Int("capacity", 1024, "The maximum capacity of the unprocessed request queue.")
 	active := flag.Int("active", 16, "The maximum capacity of active requests at any given moment.")
+	activeNotifications := flag.Int("active-notifications", 16, "The maximum capacity of active notification requests at any given moment.")
 	port := flag.Int("port", 8112, "Set the port that the server will run on.")
 	load := flag.Bool("load", false, "If the ghostdb file is available, load from it.")
 	flag.Parse()
@@ -106,7 +126,7 @@ func main() {
 		cancel()
 	}()
 
-	engine := ghost.NewEngine(*capacity, *active, time.Second)
+	engine := ghost.NewEngine(*capacity, *active, *activeNotifications, time.Second)
 
 	if *load {
 		err := engine.Load()
@@ -120,6 +140,7 @@ func main() {
 	router.HandleFunc("/clone", handleClone)
 	router.HandleFunc("/status", handleStatus)
 	router.HandleFunc("/status/{id}", handleStatus)
+	router.Methods("GET", "POST")
 
 	httpServer := http.Server{
 		Addr:    serverAddress,

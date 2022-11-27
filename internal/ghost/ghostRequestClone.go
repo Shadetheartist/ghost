@@ -14,12 +14,12 @@ func parseIsoTimeString(isoTimeStr string) (time.Time, error) {
 }
 
 func getHeader(headerKey string, req *http.Request) (string, error) {
-	toUrl := req.Header.Get(headerKey)
-	if toUrl == "" {
+	header := req.Header.Get(headerKey)
+	if header == "" {
 		return "", errors.New(fmt.Sprintf("Header '%s' must be set.", headerKey))
 	}
 
-	return toUrl, nil
+	return header, nil
 }
 
 func CloneHttpRequest(req *http.Request) (*Request, error) {
@@ -31,6 +31,18 @@ func CloneHttpRequest(req *http.Request) (*Request, error) {
 		ghostRequest.Url = header
 	} else {
 		return nil, err
+	}
+
+	header, _ := getHeader("X-Ghost-Notify-Url", req)
+	ghostRequest.NotifyUrl = header
+
+	notifyHeaderKey, _ := getHeader("X-Ghost-Notify-Header-Key", req)
+	notifyHeaderVal, _ := getHeader("X-Ghost-Notify-Header-Value", req)
+
+	if notifyHeaderKey != "" && notifyHeaderVal != "" {
+		headerVals := make([]string, 1)
+		headerVals[0] = notifyHeaderVal
+		ghostRequest.NotifyHeaders[notifyHeaderKey] = headerVals
 	}
 
 	if header, err := getHeader("X-Ghost-Exec-At", req); err == nil {
@@ -60,7 +72,7 @@ func CloneHttpRequest(req *http.Request) (*Request, error) {
 		ghostRequest.Headers[key] = value
 	}
 
-	ghostRequest.Headers["x-ghosted"] = []string{}
+	ghostRequest.Headers["x-Ghosted"] = []string{}
 
 	return ghostRequest, nil
 }

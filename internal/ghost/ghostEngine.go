@@ -3,12 +3,10 @@ package ghost
 import (
 	"bytes"
 	"errors"
+	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"time"
-
-	"encoding/gob"
 
 	"github.com/google/uuid"
 )
@@ -20,30 +18,46 @@ func GetEngine() *Engine {
 	return singleton
 }
 
-type Engine struct {
-	startupTime             time.Time
-	requestsRegisteredCount uint
-	requestsServedCount     uint
-	requestsErrorCount      uint
-	incrementRequestsServed chan int
-	incrementRequestsErr    chan int
-	incomingRequests        chan *Request
-	activeRequests          chan *Request
-	completeRequests        chan *Request
-	requestMap              map[uuid.UUID]*Request
-	requeueTimeout          time.Duration
-	ticker                  *time.Ticker
-	done                    chan bool
-	dbFileLocation          string
+type Notification struct {
+	ghostRequest *Request
+	httpResponse *http.Response
+	err          error
 }
 
-func NewEngine(capacity int, maxActiveRequests int, requeueTimeout time.Duration) *Engine {
+type Engine struct {
+	startupTime              time.Time
+	requestsRegisteredCount  uint
+	requestsServedCount      uint
+	requestsErrorCount       uint
+	notificationsServedCount uint
+	notificationsErrorCount  uint
+	incrementRequestsServed  chan int
+	incrementRequestsErr     chan int
+	incrementNotifyServed    chan int
+	incrementNotifyErr       chan int
+	incomingRequests         chan *Request
+	activeRequests           chan *Request
+	completeRequests         chan *Request
+	activeNotifyRequests     chan *Notification
+	notifyQueue              chan *Notification
+	requestMap               map[uuid.UUID]*Request
+	requeueTimeout           time.Duration
+	ticker                   *time.Ticker
+	done                     chan bool
+	dbFileLocation           string
+}
+
+func NewEngine(capacity int, maxActiveRequests int, maxActiveNotifications int, requeueTimeout time.Duration) *Engine {
 	singleton = &Engine{
 		incomingRequests:        make(chan *Request, capacity),
 		completeRequests:        make(chan *Request, maxActiveRequests),
 		activeRequests:          make(chan *Request, maxActiveRequests),
-		incrementRequestsServed: make(chan int, capacity),
-		incrementRequestsErr:    make(chan int, capacity),
+		activeNotifyRequests:    make(chan *Notification, maxActiveNotifications),
+		notifyQueue:             make(chan *Notification, capacity),
+		incrementRequestsServed: make(chan int, maxActiveRequests),
+		incrementRequestsErr:    make(chan int, maxActiveRequests),
+		incrementNotifyServed:   make(chan int, maxActiveNotifications),
+		incrementNotifyErr:      make(chan int, maxActiveNotifications),
 		requestMap:              make(map[uuid.UUID]*Request),
 		startupTime:             time.Now(),
 		requeueTimeout:          requeueTimeout,
@@ -59,16 +73,52 @@ func (e *Engine) Halt() {
 	e.done <- true
 	close(e.incomingRequests)
 	close(e.completeRequests)
+	close(e.activeRequests)
+	close(e.notifyQueue)
+	close(e.activeNotifyRequests)
 	close(e.incrementRequestsServed)
 	close(e.incrementRequestsErr)
 	e.ticker.Stop()
 }
 
-func (e *Engine) heartbeat() {
+func (e *Engine) Run() {
+
+	go e.heartbeat()
+
 	for {
 		select {
 		case <-e.done:
 			return
+
+		case n := <-e.incrementRequestsServed:
+			e.requestsServedCount = e.requestsServedCount + uint(n)
+
+		case n := <-e.incrementRequestsErr:
+			e.requestsErrorCount = e.requestsErrorCount + uint(n)
+
+		case n := <-e.incrementNotifyServed:
+			e.notificationsServedCount = e.notificationsServedCount + uint(n)
+
+		case n := <-e.incrementNotifyErr:
+			e.notificationsErrorCount = e.notificationsErrorCount + uint(n)
+
+		case ghostRequest := <-e.completeRequests:
+			delete(e.requestMap, ghostRequest.Uuid)
+
+		case notification := <-e.notifyQueue:
+			e.activeNotifyRequests <- notification
+			go e.sendNotification(notification)
+		}
+	}
+}
+
+func (e *Engine) heartbeat() {
+
+	for {
+		select {
+		case <-e.done:
+			return
+
 		case <-e.ticker.C:
 			for i := 0; i < len(e.incomingRequests); i++ {
 				ghostRequest := <-e.incomingRequests
@@ -91,26 +141,6 @@ func (e *Engine) heartbeat() {
 	}
 }
 
-func (e *Engine) Run() {
-	go e.heartbeat()
-
-	for {
-		select {
-		case <-e.done:
-			return
-
-		case n := <-e.incrementRequestsServed:
-			e.requestsServedCount = e.requestsServedCount + uint(n)
-
-		case n := <-e.incrementRequestsErr:
-			e.requestsErrorCount = e.requestsErrorCount + uint(n)
-
-		case ghostRequest := <-e.completeRequests:
-			delete(e.requestMap, ghostRequest.Uuid)
-		}
-	}
-}
-
 func (e *Engine) RegisterRequest(ghostRequest *Request) error {
 
 	select {
@@ -124,125 +154,35 @@ func (e *Engine) RegisterRequest(ghostRequest *Request) error {
 	return nil
 }
 
-func (e Engine) GetPendingRequest(uuid uuid.UUID) (*Request, bool) {
-	request, exists := e.requestMap[uuid]
-	return request, exists
-}
-
-type EngineStatus struct {
-	UptimeMinutes           uint
-	StartupTime             time.Time
-	RequeueTimeout          time.Duration
-	RequestsRegisteredCount uint
-	RequestsServedCount     uint
-	RequestsErrorCount      uint
-	QueueCapacity           int
-	QueueLength             int
-	ActiveRequestsCount     int
-	ActiveRequestsCapacity  int
-}
-
-func (e *Engine) Status() EngineStatus {
-
-	minsSinceStart := time.Now().Sub(e.startupTime).Minutes()
-
-	return EngineStatus{
-		UptimeMinutes:           uint(minsSinceStart),
-		StartupTime:             e.startupTime,
-		RequeueTimeout:          e.requeueTimeout,
-		RequestsRegisteredCount: e.requestsRegisteredCount,
-		RequestsServedCount:     e.requestsServedCount,
-		RequestsErrorCount:      e.requestsErrorCount,
-		QueueCapacity:           cap(e.incomingRequests),
-		QueueLength:             len(e.incomingRequests),
-		ActiveRequestsCount:     len(e.activeRequests),
-		ActiveRequestsCapacity:  cap(e.activeRequests),
-	}
-}
-
-type SaveData struct {
-	Requests []Request
-}
-
-// saves pending requests to ghostdb file
-func (e *Engine) Save() error {
-
-	ghostSaveData := SaveData{}
-	ghostSaveData.Requests = make([]Request, 0, len(e.requestMap))
-
-	for _, r := range e.requestMap {
-		ghostSaveData.Requests = append(ghostSaveData.Requests, *r)
-	}
-
-	// if there's no requests pending, we dont need to save anything
-	if len(ghostSaveData.Requests) < 1 {
-		return nil
-	}
-
-	log.Print("Saving pending requests to file... ")
-
-	file, err := os.Create(e.dbFileLocation)
-	if err != nil {
-		file.Close()
-		return err
-	}
-
-	encoder := gob.NewEncoder(file)
-	encoder.Encode(&ghostSaveData)
-
-	log.Println("Done!")
-
-	return nil
-}
-
-// loads requests from ghostdb file and then deletes the file (if it exists)
-func (e *Engine) Load() error {
-
-	// if the file doesn't exist, we don't need to load it
-	if _, err := os.Stat(e.dbFileLocation); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-
-	fileBytes, err := os.ReadFile(e.dbFileLocation)
-	if err != nil {
-		return err
-	}
-
-	log.Print("Loading pending requests from file... ")
-
-	ghostSaveData := SaveData{}
-
-	encoder := gob.NewDecoder(bytes.NewReader(fileBytes))
-	encoder.Decode(&ghostSaveData)
-
-	for idx := range ghostSaveData.Requests {
-		err := e.RegisterRequest(&ghostSaveData.Requests[idx])
-		if err != nil {
-			log.Printf("Err registering loaded request: %s\n", err.Error())
-		}
-	}
-
-	os.Remove(e.dbFileLocation)
-
-	log.Println("Done!")
-
-	return nil
-}
-
-func (e *Engine) completeRequest(ghostRequest *Request) {
+func (e *Engine) completeRequest(ghostRequest *Request, response *http.Response, err error) {
 	<-e.activeRequests
-	e.completeRequests <- ghostRequest
+
+	if err != nil {
+		log.Printf("Failed Sending Request %s\n", err.Error())
+		e.incrementRequestsErr <- 1
+	} else {
+		e.incrementRequestsServed <- 1
+		log.Printf("Sent request %s [%d]\n", ghostRequest.String(), response.StatusCode)
+	}
+
+	if ghostRequest.NotifyUrl != "" {
+		e.notifyQueue <- &Notification{
+			ghostRequest: ghostRequest,
+			httpResponse: response,
+			err:          err,
+		}
+	} else {
+		e.completeRequests <- ghostRequest
+	}
 }
 
 func (e *Engine) Execute(ghostRequest *Request) {
-	defer e.completeRequest(ghostRequest)
 
 	bodyReader := bytes.NewReader(ghostRequest.Body)
 	req, err := http.NewRequest(ghostRequest.Method, ghostRequest.Url, bodyReader)
 
 	if err != nil {
-		log.Printf("Failed Sending Request %s\n", err.Error())
-		e.incrementRequestsErr <- 1
+		e.completeRequest(ghostRequest, nil, err)
 		return
 	}
 
@@ -254,13 +194,75 @@ func (e *Engine) Execute(ghostRequest *Request) {
 
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("Failed Sending Request %s\n", err.Error())
-		e.incrementRequestsErr <- 1
+		e.completeRequest(ghostRequest, response, err)
 		return
 	}
 
-	e.incrementRequestsServed <- 1
+	e.completeRequest(ghostRequest, response, nil)
+}
 
-	log.Printf("Sent request %s [%d]\n", ghostRequest.String(), response.StatusCode)
+func (e *Engine) sendNotification(notification *Notification) {
 
+	var bodyBytes []byte
+	var err error
+
+	if notification.httpResponse != nil && notification.httpResponse.Body != nil {
+		bodyBytes, err = ioutil.ReadAll(notification.httpResponse.Body)
+
+		if err != nil {
+			log.Printf(
+				"Could not send notification to %s (could not read body content)\n",
+				notification.ghostRequest.NotifyUrl)
+
+			e.completeRequests <- notification.ghostRequest
+			e.incrementNotifyErr <- 1
+			<-e.activeNotifyRequests
+			return
+		}
+
+		notification.httpResponse.Body.Close()
+	}
+
+	req, err := http.NewRequest("POST", notification.ghostRequest.NotifyUrl, bytes.NewReader(bodyBytes))
+
+	if err != nil {
+		log.Printf(
+			"Could not send notification to %s (could not constuct request)\n",
+			notification.ghostRequest.NotifyUrl)
+
+		<-e.activeNotifyRequests
+		e.completeRequests <- notification.ghostRequest
+		e.incrementNotifyErr <- 1
+		return
+	}
+
+	if notification.httpResponse != nil {
+		req.Header.Set("Content-Type", notification.httpResponse.Header.Get("Content-Type"))
+	}
+
+	for key, arr := range notification.ghostRequest.NotifyHeaders {
+		for _, val := range arr {
+			req.Header.Add(key, val)
+		}
+	}
+
+	response, err := http.DefaultClient.Do(req)
+
+	if err != nil {
+		log.Printf(
+			"Could not send notification to %s (%s)\n",
+			notification.ghostRequest.NotifyUrl,
+			err.Error())
+
+		<-e.activeNotifyRequests
+		e.incrementNotifyErr <- 1
+		e.completeRequests <- notification.ghostRequest
+		return
+	}
+
+	log.Printf("Sent notification for %s [%d]\n", notification.ghostRequest.String(), response.StatusCode)
+
+	<-e.activeNotifyRequests
+	e.completeRequests <- notification.ghostRequest
+	e.incrementNotifyServed <- 1
 }

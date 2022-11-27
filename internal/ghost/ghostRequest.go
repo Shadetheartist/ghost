@@ -8,13 +8,15 @@ import (
 )
 
 type Request struct {
-	Uuid      uuid.UUID
-	CreatedAt time.Time
-	ExecuteAt time.Time
-	Method    string
-	Url       string
-	Headers   map[string][]string
-	Body      []byte
+	Uuid          uuid.UUID
+	CreatedAt     time.Time
+	ExecuteAt     time.Time
+	Method        string
+	Url           string
+	NotifyUrl     string
+	Headers       map[string][]string
+	NotifyHeaders map[string][]string
+	Body          []byte
 }
 
 func NewRequest() *Request {
@@ -22,12 +24,13 @@ func NewRequest() *Request {
 	delay := 3 * time.Second
 
 	return &Request{
-		Uuid:      uuid.New(),
-		CreatedAt: now,
-		ExecuteAt: now.Add(delay),
-		Headers:   make(map[string][]string),
-		Method:    "GET",
-		Url:       "http://localhost:8112/status",
+		Uuid:          uuid.New(),
+		CreatedAt:     now,
+		ExecuteAt:     now.Add(delay),
+		Headers:       make(map[string][]string),
+		NotifyHeaders: make(map[string][]string),
+		Method:        "GET",
+		Url:           "http://localhost:8112/status",
 	}
 }
 
