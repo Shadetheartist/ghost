@@ -73,6 +73,7 @@ func main() {
 	maxPending := flag.Int("max-pending", 10000, "The maximum capacity of pending requests.")
 	capacity := flag.Int("max-flux", 100, "The maximum capacity of the unprocessed request queue.")
 	port := flag.Int("port", 8112, "Set the port that the server will run on.")
+	load := flag.Bool("load", false, "If the ghostdb file is available, load from it.")
 	flag.Parse()
 
 	serverAddress := fmt.Sprintf(":%d", *port)
@@ -91,9 +92,12 @@ func main() {
 	}()
 
 	engine := ghost.NewEngine(*maxPending, *capacity, time.Second)
-	err := engine.Load()
-	if err != nil {
-		fmt.Printf("Error loading state from file.\n%s", err.Error())
+
+	if *load {
+		err := engine.Load()
+		if err != nil {
+			fmt.Printf("Error loading state from file.\n%s", err.Error())
+		}
 	}
 
 	router := mux.NewRouter()
