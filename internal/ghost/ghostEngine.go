@@ -3,7 +3,6 @@ package ghost
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -116,7 +115,6 @@ func (e *Engine) RegisterRequest(ghostRequest *Request) error {
 
 	select {
 	case e.incomingRequests <- ghostRequest: // Put request into channel, unless it's full
-		log.Println("Registered")
 		e.requestMap[ghostRequest.Uuid] = ghostRequest
 		e.requestsRegisteredCount++
 	default:
@@ -181,7 +179,7 @@ func (e *Engine) Save() error {
 		return nil
 	}
 
-	fmt.Print("Saving pending requests to file... ")
+	log.Print("Saving pending requests to file... ")
 
 	file, err := os.Create(e.dbFileLocation)
 	if err != nil {
@@ -192,7 +190,7 @@ func (e *Engine) Save() error {
 	encoder := gob.NewEncoder(file)
 	encoder.Encode(&ghostSaveData)
 
-	fmt.Println("Done!")
+	log.Println("Done!")
 
 	return nil
 }
@@ -210,7 +208,7 @@ func (e *Engine) Load() error {
 		return err
 	}
 
-	fmt.Print("Loading pending requests from file... ")
+	log.Print("Loading pending requests from file... ")
 
 	ghostSaveData := SaveData{}
 
@@ -220,13 +218,13 @@ func (e *Engine) Load() error {
 	for idx := range ghostSaveData.Requests {
 		err := e.RegisterRequest(&ghostSaveData.Requests[idx])
 		if err != nil {
-			fmt.Printf("Err registering loaded request: %s\n", err.Error())
+			log.Printf("Err registering loaded request: %s\n", err.Error())
 		}
 	}
 
 	os.Remove(e.dbFileLocation)
 
-	fmt.Println("Done!")
+	log.Println("Done!")
 
 	return nil
 }
@@ -243,7 +241,7 @@ func (e *Engine) Execute(ghostRequest *Request) {
 	req, err := http.NewRequest(ghostRequest.Method, ghostRequest.Url, bodyReader)
 
 	if err != nil {
-		fmt.Printf("Failed Sending Request %s\n", err.Error())
+		log.Printf("Failed Sending Request %s\n", err.Error())
 		e.incrementRequestsErr <- 1
 		return
 	}
@@ -256,13 +254,13 @@ func (e *Engine) Execute(ghostRequest *Request) {
 
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Printf("Failed Sending Request %s\n", err.Error())
+		log.Printf("Failed Sending Request %s\n", err.Error())
 		e.incrementRequestsErr <- 1
 		return
 	}
 
 	e.incrementRequestsServed <- 1
 
-	fmt.Printf("Sent request %s [%d]\n", ghostRequest.String(), response.StatusCode)
+	log.Printf("Sent request %s [%d]\n", ghostRequest.String(), response.StatusCode)
 
 }

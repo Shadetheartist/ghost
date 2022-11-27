@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"internal/ghost"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,21 +22,21 @@ func handleClone(w http.ResponseWriter, req *http.Request) {
 	ghostRequest, err := ghost.CloneHttpRequest(req)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Println(err.Error())
+		log.Println(err.Error())
 		fmt.Fprintf(w, err.Error())
 		return
 	}
 
 	err = ghost.GetEngine().RegisterRequest(ghostRequest)
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Println(err.Error())
 		fmt.Fprintf(w, err.Error())
 		return
 	}
 
-	ghostRequestStr := ghostRequest.String()
-	logStr := fmt.Sprintf("Cloned http request and registered %s\n", ghostRequestStr)
-	fmt.Print(logStr)
+	ghostRequestStr := ghostRequest.UrlString()
+	logStr := fmt.Sprintf("Cloned %s\n", ghostRequestStr)
+	log.Print(logStr)
 	fmt.Fprintf(w, logStr)
 }
 
@@ -92,7 +93,7 @@ func main() {
 
 	serverAddress := fmt.Sprintf(":%d", *port)
 
-	fmt.Println("Starting Ghost Server at", serverAddress)
+	log.Println("Starting Ghost Server at", serverAddress)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -110,7 +111,7 @@ func main() {
 	if *load {
 		err := engine.Load()
 		if err != nil {
-			fmt.Printf("Error loading state from file.\n%s", err.Error())
+			log.Printf("Error loading state from file.\n%s", err.Error())
 		}
 	}
 
@@ -143,7 +144,7 @@ func main() {
 	})
 
 	if err := g.Wait(); err != nil {
-		fmt.Printf("\nExit Reason: %s \n", err)
+		log.Printf("\nExit Reason: %s \n", err)
 	}
 
 }
