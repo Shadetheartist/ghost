@@ -77,6 +77,7 @@ func (e *Engine) Run() {
 		case <-e.ticker.C:
 			for _, ghostRequest := range e.requestMap {
 				if ghostRequest.ShouldExecute() {
+					ghostRequest.Executing = true
 					go e.Execute(ghostRequest)
 				}
 			}
@@ -109,10 +110,6 @@ func (e Engine) RequestStatus(uuid uuid.UUID) string {
 	}
 
 	return "Not Found"
-}
-
-func (e Engine) removeFromMap(uuid uuid.UUID) {
-	delete(e.requestMap, uuid)
 }
 
 type EngineStatus struct {

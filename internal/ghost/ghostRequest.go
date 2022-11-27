@@ -18,6 +18,7 @@ type Request struct {
 	NotifyUrl string
 	Headers   map[string][]string
 	Body      []byte
+	Executing bool
 }
 
 func NewRequest() *Request {
@@ -30,8 +31,9 @@ func NewRequest() *Request {
 		ExecuteAt: now.Add(delay),
 		Headers:   make(map[string][]string),
 		Method:    "GET",
-		Url:       "http://localhost:8090/status",
-		NotifyUrl: "http://localhost:8090/status",
+		Url:       "http://localhost:8112/status",
+		NotifyUrl: "http://localhost:8112/status",
+		Executing: false,
 	}
 }
 
@@ -54,6 +56,10 @@ func (req *Request) DurationRemaining() time.Duration {
 }
 
 func (req *Request) ShouldExecute() bool {
+	if req.Executing {
+		return false
+	}
+
 	return req.DurationRemaining() <= 0
 }
 
