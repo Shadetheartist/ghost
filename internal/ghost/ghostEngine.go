@@ -77,7 +77,7 @@ func (e *Engine) Run() {
 		case <-e.ticker.C:
 			for _, ghostRequest := range e.requestMap {
 				if ghostRequest.ShouldExecute() {
-				go e.Execute(ghostRequest)
+					go e.Execute(ghostRequest)
 				}
 			}
 		}
