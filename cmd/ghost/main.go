@@ -53,12 +53,16 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		queueStr := fmt.Sprintf("Queue: %d/%d\n",
 			engineStatus.QueueLength,
 			engineStatus.QueueCapacity)
+		activeStr := fmt.Sprintf("Active: %d/%d\n",
+			engineStatus.ActiveRequestsCount,
+			engineStatus.ActiveRequestsCapacity)
 		fmt.Fprintf(w, startStr)
 		fmt.Fprintf(w, uptimeStr)
 		fmt.Fprintf(w, reqRegStr)
 		fmt.Fprintf(w, reqServStr)
 		fmt.Fprintf(w, reqErrStr)
 		fmt.Fprintf(w, queueStr)
+		fmt.Fprintf(w, activeStr)
 	} else {
 		uuid := uuid.MustParse(id)
 
@@ -74,14 +78,14 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 
 		} else {
 			fmt.Fprintf(w, "Not Found\n")
-
 		}
 	}
 }
 
 func main() {
 
-	capacity := flag.Int("capacity", 1000, "The maximum capacity of the unprocessed request queue.")
+	capacity := flag.Int("capacity", 1024, "The maximum capacity of the unprocessed request queue.")
+	active := flag.Int("active", 16, "The maximum capacity of active requests at any given moment.")
 	port := flag.Int("port", 8112, "Set the port that the server will run on.")
 	load := flag.Bool("load", false, "If the ghostdb file is available, load from it.")
 	flag.Parse()
@@ -101,7 +105,7 @@ func main() {
 		cancel()
 	}()
 
-	engine := ghost.NewEngine(*capacity, time.Second)
+	engine := ghost.NewEngine(*capacity, *active, time.Second)
 
 	if *load {
 		err := engine.Load()

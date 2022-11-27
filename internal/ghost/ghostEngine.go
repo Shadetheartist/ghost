@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -28,6 +29,7 @@ type Engine struct {
 	incrementRequestsServed chan int
 	incrementRequestsErr    chan int
 	incomingRequests        chan *Request
+	activeRequests          chan *Request
 	completeRequests        chan *Request
 	requestMap              map[uuid.UUID]*Request
 	requeueTimeout          time.Duration
@@ -36,10 +38,11 @@ type Engine struct {
 	dbFileLocation          string
 }
 
-func NewEngine(capacity int, requeueTimeout time.Duration) *Engine {
+func NewEngine(capacity int, maxActiveRequests int, requeueTimeout time.Duration) *Engine {
 	singleton = &Engine{
 		incomingRequests:        make(chan *Request, capacity),
-		completeRequests:        make(chan *Request, capacity),
+		completeRequests:        make(chan *Request, maxActiveRequests),
+		activeRequests:          make(chan *Request, maxActiveRequests),
 		incrementRequestsServed: make(chan int, capacity),
 		incrementRequestsErr:    make(chan int, capacity),
 		requestMap:              make(map[uuid.UUID]*Request),
@@ -62,7 +65,36 @@ func (e *Engine) Halt() {
 	e.ticker.Stop()
 }
 
+func (e *Engine) heartbeat() {
+	for {
+		select {
+		case <-e.done:
+			return
+		case <-e.ticker.C:
+			for i := 0; i < len(e.incomingRequests); i++ {
+				ghostRequest := <-e.incomingRequests
+
+				if ghostRequest.ShouldExecute() == false {
+					e.incomingRequests <- ghostRequest
+					continue
+				}
+
+				select {
+				case e.activeRequests <- ghostRequest:
+					go e.Execute(ghostRequest)
+				default:
+					e.incomingRequests <- ghostRequest
+					continue
+				}
+
+			}
+		}
+	}
+}
+
 func (e *Engine) Run() {
+	go e.heartbeat()
+
 	for {
 		select {
 		case <-e.done:
@@ -74,20 +106,8 @@ func (e *Engine) Run() {
 		case n := <-e.incrementRequestsErr:
 			e.requestsErrorCount = e.requestsErrorCount + uint(n)
 
-		case req := <-e.completeRequests:
-			delete(e.requestMap, req.Uuid)
-
-		case <-e.ticker.C:
-			for i := 0; i < len(e.incomingRequests); i++ {
-				ghostRequest := <-e.incomingRequests
-
-				if ghostRequest.ShouldExecute() == false {
-					e.incomingRequests <- ghostRequest
-					continue
-				}
-
-				go e.Execute(ghostRequest)
-			}
+		case ghostRequest := <-e.completeRequests:
+			delete(e.requestMap, ghostRequest.Uuid)
 		}
 	}
 }
@@ -96,6 +116,7 @@ func (e *Engine) RegisterRequest(ghostRequest *Request) error {
 
 	select {
 	case e.incomingRequests <- ghostRequest: // Put request into channel, unless it's full
+		log.Println("Registered")
 		e.requestMap[ghostRequest.Uuid] = ghostRequest
 		e.requestsRegisteredCount++
 	default:
@@ -119,6 +140,8 @@ type EngineStatus struct {
 	RequestsErrorCount      uint
 	QueueCapacity           int
 	QueueLength             int
+	ActiveRequestsCount     int
+	ActiveRequestsCapacity  int
 }
 
 func (e *Engine) Status() EngineStatus {
@@ -134,6 +157,8 @@ func (e *Engine) Status() EngineStatus {
 		RequestsErrorCount:      e.requestsErrorCount,
 		QueueCapacity:           cap(e.incomingRequests),
 		QueueLength:             len(e.incomingRequests),
+		ActiveRequestsCount:     len(e.activeRequests),
+		ActiveRequestsCapacity:  cap(e.activeRequests),
 	}
 }
 
@@ -207,6 +232,7 @@ func (e *Engine) Load() error {
 }
 
 func (e *Engine) completeRequest(ghostRequest *Request) {
+	<-e.activeRequests
 	e.completeRequests <- ghostRequest
 }
 
@@ -238,4 +264,5 @@ func (e *Engine) Execute(ghostRequest *Request) {
 	e.incrementRequestsServed <- 1
 
 	fmt.Printf("Sent request %s [%d]\n", ghostRequest.String(), response.StatusCode)
+
 }
