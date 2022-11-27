@@ -41,6 +41,7 @@ func NewEngine(capacity int, requeueTimeout time.Duration) *Engine {
 		incomingRequests:        make(chan *Request, capacity),
 		completeRequests:        make(chan *Request, capacity),
 		incrementRequestsServed: make(chan int, capacity),
+		incrementRequestsErr:    make(chan int, capacity),
 		requestMap:              make(map[uuid.UUID]*Request),
 		startupTime:             time.Now(),
 		requeueTimeout:          requeueTimeout,
@@ -55,6 +56,7 @@ func NewEngine(capacity int, requeueTimeout time.Duration) *Engine {
 func (e *Engine) Halt() {
 	e.done <- true
 	close(e.incomingRequests)
+	close(e.completeRequests)
 	close(e.incrementRequestsServed)
 	close(e.incrementRequestsErr)
 	e.ticker.Stop()
