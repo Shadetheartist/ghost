@@ -68,24 +68,17 @@ func (e *Engine) Run() {
 			if len(e.requestMap) < e.maxPendingRequests {
 				e.requestMap[ghostRequest.Uuid] = ghostRequest
 			} else {
-				fmt.Printf("Maximum pending requests reached. Ignoring request %s", ghostRequest.Uuid.String())
+				fmt.Printf("Maximum pending requests reached. Ignoring request %s\n", ghostRequest.Uuid.String())
 			}
 
 		case ghostRequest := <-e.completedRequests:
 			delete(e.requestMap, ghostRequest.Uuid)
 
 		case <-e.ticker.C:
-			// if the channel has a non-zero length, we should dequeue and check each request
-			// to see if it should be executed or not - if not, we can add it back onto the
-			// channel for the next check
 			for _, ghostRequest := range e.requestMap {
-				if ghostRequest.ShouldExecute() == false {
-					e.incomingRequests <- ghostRequest
-					continue
-				}
-
-				// request should be executed
+				if ghostRequest.ShouldExecute() {
 				go e.Execute(ghostRequest)
+				}
 			}
 		}
 	}
