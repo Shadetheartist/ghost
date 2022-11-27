@@ -201,8 +201,11 @@ func (e *Engine) Load() error {
 	encoder := gob.NewDecoder(bytes.NewReader(fileBytes))
 	encoder.Decode(&ghostSaveData)
 
-	for _, req := range ghostSaveData.Requests {
-		e.requestMap[req.Uuid] = &req
+	for idx := range ghostSaveData.Requests {
+		err := e.RegisterRequest(&ghostSaveData.Requests[idx])
+		if err != nil {
+			fmt.Printf("Err registering loaded request: %s\n", err.Error())
+		}
 	}
 
 	os.Remove("./ghostdb")
