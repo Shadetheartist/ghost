@@ -33,10 +33,6 @@ func CloneHttpRequest(req *http.Request) (*Request, error) {
 		return nil, err
 	}
 
-	if header, err := getHeader("x-Ghost-Notify-Url", req); err == nil {
-		ghostRequest.NotifyUrl = header
-	}
-
 	if header, err := getHeader("X-Ghost-Exec-At", req); err == nil {
 		if header, err := parseIsoTimeString(header); err == nil {
 			ghostRequest.ExecuteAt = header

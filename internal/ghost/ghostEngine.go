@@ -25,27 +25,28 @@ type Engine struct {
 	requestsRegisteredCount uint
 	requestsServedCount     uint
 	requestsErrorCount      uint
+	incrementRequestsServed chan int
+	incrementRequestsErr    chan int
 	incomingRequests        chan *Request
-	completedRequests       chan *Request
+	completeRequests        chan *Request
 	requestMap              map[uuid.UUID]*Request
-	maxPendingRequests      int
 	requeueTimeout          time.Duration
 	ticker                  *time.Ticker
 	done                    chan bool
 	dbFileLocation          string
 }
 
-func NewEngine(maxPendingRequests int, fluxCapacity int, requeueTimeout time.Duration) *Engine {
+func NewEngine(capacity int, requeueTimeout time.Duration) *Engine {
 	singleton = &Engine{
-		incomingRequests:   make(chan *Request, fluxCapacity),
-		completedRequests:  make(chan *Request, fluxCapacity),
-		requestMap:         make(map[uuid.UUID]*Request),
-		startupTime:        time.Now(),
-		requeueTimeout:     requeueTimeout,
-		ticker:             time.NewTicker(requeueTimeout),
-		done:               make(chan bool),
-		maxPendingRequests: maxPendingRequests,
-		dbFileLocation:     "./ghostdb",
+		incomingRequests:        make(chan *Request, capacity),
+		completeRequests:        make(chan *Request, capacity),
+		incrementRequestsServed: make(chan int, capacity),
+		requestMap:              make(map[uuid.UUID]*Request),
+		startupTime:             time.Now(),
+		requeueTimeout:          requeueTimeout,
+		ticker:                  time.NewTicker(requeueTimeout),
+		done:                    make(chan bool),
+		dbFileLocation:          "./ghostdb",
 	}
 
 	return singleton
@@ -54,7 +55,8 @@ func NewEngine(maxPendingRequests int, fluxCapacity int, requeueTimeout time.Dur
 func (e *Engine) Halt() {
 	e.done <- true
 	close(e.incomingRequests)
-	close(e.completedRequests)
+	close(e.incrementRequestsServed)
+	close(e.incrementRequestsErr)
 	e.ticker.Stop()
 }
 
@@ -64,22 +66,25 @@ func (e *Engine) Run() {
 		case <-e.done:
 			return
 
-		case ghostRequest := <-e.incomingRequests:
-			if len(e.requestMap) < e.maxPendingRequests {
-				e.requestMap[ghostRequest.Uuid] = ghostRequest
-			} else {
-				fmt.Printf("Maximum pending requests reached. Ignoring request %s\n", ghostRequest.Uuid.String())
-			}
+		case n := <-e.incrementRequestsServed:
+			e.requestsServedCount = e.requestsServedCount + uint(n)
 
-		case ghostRequest := <-e.completedRequests:
-			delete(e.requestMap, ghostRequest.Uuid)
+		case n := <-e.incrementRequestsErr:
+			e.requestsErrorCount = e.requestsErrorCount + uint(n)
+
+		case req := <-e.completeRequests:
+			delete(e.requestMap, req.Uuid)
 
 		case <-e.ticker.C:
-			for _, ghostRequest := range e.requestMap {
-				if ghostRequest.ShouldExecute() {
-					ghostRequest.Executing = true
-					go e.Execute(ghostRequest)
+			for i := 0; i < len(e.incomingRequests); i++ {
+				ghostRequest := <-e.incomingRequests
+
+				if ghostRequest.ShouldExecute() == false {
+					e.incomingRequests <- ghostRequest
+					continue
 				}
+
+				go e.Execute(ghostRequest)
 			}
 		}
 	}
@@ -89,27 +94,18 @@ func (e *Engine) RegisterRequest(ghostRequest *Request) error {
 
 	select {
 	case e.incomingRequests <- ghostRequest: // Put request into channel, unless it's full
+		e.requestMap[ghostRequest.Uuid] = ghostRequest
 		e.requestsRegisteredCount++
 	default:
-		return errors.New("Request flux queue capacity exceeded. Could not register request. \nGhost cannot register any further requests until one or more are fulfilled. \n")
+		return errors.New("Request queue capacity exceeded. Could not register request. \nGhost cannot register any further requests until one or more are fulfilled. \n")
 	}
 
 	return nil
 }
 
-func (e Engine) RequestStatus(uuid uuid.UUID) string {
+func (e Engine) GetPendingRequest(uuid uuid.UUID) (*Request, bool) {
 	request, exists := e.requestMap[uuid]
-
-	if exists {
-		str := fmt.Sprintf("UUID: %s\n", request.Uuid.String()) +
-			fmt.Sprintf("Method: %s\n", request.Method) +
-			fmt.Sprintf("URL: %s\n", request.Url) +
-			fmt.Sprintf("In queue since: %s\n", request.CreatedAt.Format(TimeFormat)) +
-			fmt.Sprintf("Will execute at: %s\n", request.ExecuteAt.Format(TimeFormat))
-		return str
-	}
-
-	return "Not Found"
+	return request, exists
 }
 
 type EngineStatus struct {
@@ -121,8 +117,6 @@ type EngineStatus struct {
 	RequestsErrorCount      uint
 	QueueCapacity           int
 	QueueLength             int
-	PendingRequestsCount    int
-	PendingRequestsMax      int
 }
 
 func (e *Engine) Status() EngineStatus {
@@ -138,8 +132,6 @@ func (e *Engine) Status() EngineStatus {
 		RequestsErrorCount:      e.requestsErrorCount,
 		QueueCapacity:           cap(e.incomingRequests),
 		QueueLength:             len(e.incomingRequests),
-		PendingRequestsCount:    len(e.requestMap),
-		PendingRequestsMax:      e.maxPendingRequests,
 	}
 }
 
@@ -205,7 +197,7 @@ func (e *Engine) Load() error {
 		}
 	}
 
-	os.Remove("./ghostdb")
+	os.Remove(e.dbFileLocation)
 
 	fmt.Println("Done!")
 
@@ -213,7 +205,7 @@ func (e *Engine) Load() error {
 }
 
 func (e *Engine) completeRequest(ghostRequest *Request) {
-	e.completedRequests <- ghostRequest
+	e.completeRequests <- ghostRequest
 }
 
 func (e *Engine) Execute(ghostRequest *Request) {
@@ -224,8 +216,7 @@ func (e *Engine) Execute(ghostRequest *Request) {
 
 	if err != nil {
 		fmt.Printf("Failed Sending Request %s\n", err.Error())
-		ghostRequest.notifyFailure()
-		e.requestsErrorCount++
+		e.incrementRequestsErr <- 1
 		return
 	}
 
@@ -238,13 +229,11 @@ func (e *Engine) Execute(ghostRequest *Request) {
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Printf("Failed Sending Request %s\n", err.Error())
-		ghostRequest.notifyFailure()
-		e.requestsErrorCount++
+		e.incrementRequestsErr <- 1
 		return
 	}
 
-	ghostRequest.notifySuccess()
-	e.requestsServedCount++
+	e.incrementRequestsServed <- 1
 
 	fmt.Printf("Sent request %s [%d]\n", ghostRequest.String(), response.StatusCode)
 }

@@ -11,10 +11,10 @@ X-Ghost-Exec-At: <when to send the request (rfc 3339)>
 
 ```
 Usage of ghost:
-  -max-flux int
-        The maximum capacity of the unprocessed request queue. (default 100)
-  -max-pending int
-        The maximum capacity of pending requests. (default 10000)
+  -capacity int
+        The maximum capacity of the unprocessed request queue. (default 1000)
+  -load
+        If the ghostdb file is available, load from it. 
   -port int
         Set the port that the server will run on. (default 8112)
 ```

@@ -50,28 +50,38 @@ func handleStatus(w http.ResponseWriter, req *http.Request) {
 		reqRegStr := fmt.Sprintf("Requests Registered: %d\n", engineStatus.RequestsRegisteredCount)
 		reqServStr := fmt.Sprintf("Requests Served: %d\n", engineStatus.RequestsServedCount)
 		reqErrStr := fmt.Sprintf("Request Errors: %d\n", engineStatus.RequestsErrorCount)
-		queueStr := fmt.Sprintf("Flux Queue: %d/%d\n",
+		queueStr := fmt.Sprintf("Queue: %d/%d\n",
 			engineStatus.QueueLength,
 			engineStatus.QueueCapacity)
-		pendingStr := fmt.Sprintf("Pending: %d/%d\n", engineStatus.PendingRequestsCount, engineStatus.PendingRequestsMax)
 		fmt.Fprintf(w, startStr)
 		fmt.Fprintf(w, uptimeStr)
 		fmt.Fprintf(w, reqRegStr)
 		fmt.Fprintf(w, reqServStr)
 		fmt.Fprintf(w, reqErrStr)
 		fmt.Fprintf(w, queueStr)
-		fmt.Fprintf(w, pendingStr)
 	} else {
 		uuid := uuid.MustParse(id)
-		fmt.Fprintf(w, ghost.GetEngine().RequestStatus(uuid))
-	}
 
+		request, exists := ghost.GetEngine().GetPendingRequest(uuid)
+
+		if exists {
+			str := fmt.Sprintf("UUID: %s\n", request.Uuid.String()) +
+				fmt.Sprintf("Method: %s\n", request.Method) +
+				fmt.Sprintf("URL: %s\n", request.Url) +
+				fmt.Sprintf("In queue since: %s\n", request.CreatedAt.UTC().Format(ghost.TimeFormat)) +
+				fmt.Sprintf("Will execute at: %s\n", request.ExecuteAt.UTC().Format(ghost.TimeFormat))
+			fmt.Fprintf(w, str)
+
+		} else {
+			fmt.Fprintf(w, "Not Found\n")
+
+		}
+	}
 }
 
 func main() {
 
-	maxPending := flag.Int("max-pending", 10000, "The maximum capacity of pending requests.")
-	capacity := flag.Int("max-flux", 100, "The maximum capacity of the unprocessed request queue.")
+	capacity := flag.Int("capacity", 1000, "The maximum capacity of the unprocessed request queue.")
 	port := flag.Int("port", 8112, "Set the port that the server will run on.")
 	load := flag.Bool("load", false, "If the ghostdb file is available, load from it.")
 	flag.Parse()
@@ -91,7 +101,7 @@ func main() {
 		cancel()
 	}()
 
-	engine := ghost.NewEngine(*maxPending, *capacity, time.Second)
+	engine := ghost.NewEngine(*capacity, time.Second)
 
 	if *load {
 		err := engine.Load()
