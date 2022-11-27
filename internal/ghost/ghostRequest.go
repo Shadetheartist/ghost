@@ -1,7 +1,6 @@
 package ghost
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,6 +43,12 @@ func (req *Request) String() string {
 		req.ExecuteAt.Format(TimeFormat))
 }
 
+func (req *Request) UrlString() string {
+	return fmt.Sprintf("(%s) %s",
+		req.Method,
+		req.Url)
+}
+
 func (req *Request) DurationRemaining() time.Duration {
 	return req.ExecuteAt.Sub(time.Now())
 }
@@ -52,7 +57,7 @@ func (req *Request) ShouldExecute() bool {
 	return req.DurationRemaining() <= 0
 }
 
-func notifyFailure(req *Request) {
+func (req *Request) notifyFailure() {
 
 	uuidStr := req.Uuid.String()
 	bodyContent := fmt.Sprintf("Failed to send request with id [%s]\n", uuidStr)
@@ -62,7 +67,7 @@ func notifyFailure(req *Request) {
 	}
 }
 
-func notifySuccess(req *Request) {
+func (req *Request) notifySuccess() {
 
 	uuidStr := req.Uuid.String()
 	bodyContent := fmt.Sprintf("Successfully sent request with id [%s]\n", uuidStr)
@@ -70,37 +75,4 @@ func notifySuccess(req *Request) {
 	if len(req.NotifyUrl) > 0 {
 		http.Post(req.NotifyUrl, "text/plain", strings.NewReader(bodyContent))
 	}
-}
-
-func (ghostRequest *Request) Execute(e *Engine) error {
-	defer e.removeFromMap(ghostRequest.Uuid)
-
-	bodyReader := bytes.NewReader(ghostRequest.Body)
-	req, err := http.NewRequest(ghostRequest.Method, ghostRequest.Url, bodyReader)
-
-	if err != nil {
-		notifyFailure(ghostRequest)
-		e.requestsErrorCount++
-		return err
-	}
-
-	for key, arr := range ghostRequest.Headers {
-		for _, val := range arr {
-			req.Header.Add(key, val)
-		}
-	}
-
-	_, err = http.DefaultClient.Do(req)
-	if err != nil {
-		notifyFailure(ghostRequest)
-		e.requestsErrorCount++
-		return err
-	}
-
-	notifySuccess(ghostRequest)
-	e.requestsServedCount++
-
-	fmt.Printf("Sent request %s\n", ghostRequest.String())
-
-	return nil
 }
