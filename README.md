@@ -11,10 +11,14 @@ X-Ghost-Exec-At: <when to send the request (rfc 3339)>
 
 ```
 Usage of ghost:
+  -active int
+        The maximum capacity of active requests at any given moment. (default 16)
+  -active-notifications int
+        The maximum capacity of active notification requests at any given moment. (default 16)
   -capacity int
-        The maximum capacity of the unprocessed request queue. (default 1000)
+        The maximum capacity of the unprocessed request queue. (default 1024)
   -load
-        If the ghostdb file is available, load from it. 
+        If the ghostdb file is available, load from it.
   -port int
         Set the port that the server will run on. (default 8112)
 ```
